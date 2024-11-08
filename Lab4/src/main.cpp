@@ -32,6 +32,7 @@ Description: Main file for Conway's Game of Life using CUDA for processing.
 */
 // Parses user's command line arguments to changes default game specs.
 void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowHeight, int& cellSize, int& numThreads, std::string& memoryType);
+void freeCudaMemory(bool* d_currentGrid, bool* d_nextGrid, std::string memoryType);
 
 /*
     MAIN FUNCTION
@@ -69,12 +70,12 @@ int main(int argc, char* argv[]) {
         cudaMalloc(&d_nextGrid, gridWidth * gridHeight * sizeof(bool));
     }
     else {
-        std::cerr << "Invalid memory type.\n";
+        std::cerr << "Invalid memory type: " << memoryType << "\n"; 
     }
 
     // Seed the initial grid with random values
     bool* h_grid = new bool[gridWidth * gridHeight];
-    seedRandomGrid(h_grid, gridWidth, gridHeight);
+    randomizeGrid(h_grid, gridWidth, gridHeight);
     cudaMemcpy(d_currentGrid, h_grid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyHostToDevice);
     delete[] h_grid;
 
@@ -87,8 +88,9 @@ int main(int argc, char* argv[]) {
 
     // Set up the SFML window
     sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Lab 4: CUDA Game of Life");
-    //window.setFramerateLimit(60);
+    window.setFramerateLimit(60);
 
+    // Variables to keep track of the number of generations & total processing time.
     int generationCount = 0;
     float totalProcessingTime = 0.0f;
 
@@ -96,6 +98,7 @@ int main(int argc, char* argv[]) {
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed || (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape)) {
+                std::cout << "Program Terminated\n";
                 window.close();
             }
         }
@@ -110,7 +113,7 @@ int main(int argc, char* argv[]) {
         cudaEventRecord(generationStart);
 
         // Run CUDA kernel to update the grid
-        runGameOfLife(d_currentGrid, d_nextGrid, gridWidth, gridHeight, numThreadsDimensions, numBlocks);
+        runProgram(d_currentGrid, d_nextGrid, gridWidth, gridHeight, numThreadsDimensions, numBlocks);
 
         // Swap the grids
         std::swap(d_currentGrid, d_nextGrid);
@@ -137,7 +140,7 @@ int main(int argc, char* argv[]) {
                 if (h_currentGrid[y * gridWidth + x]) {
                     sf::RectangleShape cell(sf::Vector2f(cellSize, cellSize));
                     cell.setPosition(x * cellSize, y * cellSize);
-                    cell.setFillColor(sf::Color::White);
+                    cell.setFillColor(sf::Color::Red);
                     window.draw(cell);
                 }
             }
@@ -156,14 +159,7 @@ int main(int argc, char* argv[]) {
     delete[] h_currentGrid;
 
     // Free GPU memory
-    if (memoryType == "PINNED") {
-        cudaFreeHost(d_currentGrid);
-        cudaFreeHost(d_nextGrid);
-    }
-    else {
-        cudaFree(d_currentGrid);
-        cudaFree(d_nextGrid);
-    }
+    freeCudaMemory(d_currentGrid, d_nextGrid, memoryType);
 
     return 0;
 }
@@ -194,4 +190,14 @@ void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowH
             std::cerr << "Invalid/unknown command line arguments: " << arg << "\n";
         }
     }
+}
+
+void freeCudaMemory(bool* d_currentGrid, bool* d_nextGrid, std::string memoryType) {
+    if (memoryType == "PINNED") {
+        cudaFreeHost(d_currentGrid);
+        cudaFreeHost(d_nextGrid);
+        return;
+    }
+    cudaFree(d_currentGrid);
+    cudaFree(d_nextGrid);
 }
