@@ -3,6 +3,8 @@ Author: Edward Kwak
 Class: ECE 4122
 Last Modified Date: 11/8/2024
 
+Description:
+
 */
 
 #ifndef CUDA_KERNELS_CUH
