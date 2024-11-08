@@ -15,9 +15,7 @@ Description: Main file for Conway's Game of Life using CUDA for processing.
 
 */
 
-/*
-    PREPROCESSOR DIRECTIVES
-*/
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -26,17 +24,45 @@ Description: Main file for Conway's Game of Life using CUDA for processing.
 #include <SFML/Graphics.hpp>
 #include "cuda_kernels.cuh"
 
+//####################################################################//
+//####################################################################//
+//                       FUNCTION PROTOTYPES                          //
+//####################################################################//
+//####################################################################//
 
 /*
-    FUNCTION PROTOTYPES
+    Description:
+        - Parses command line arguments and overrides default specs.
+    
+    Parameters:
+        - argc: Number of arguments.
+        - argv: Arguments.
+        - windowWidth: Width of the window.
+        - windowHeight: Height of the window.
+        - cellSize: Size of cells.
+        - numThreads: Number of threads per block.
+        - memoryType: NORMAL/PINNED/MANAGED
 */
-// Parses user's command line arguments to changes default game specs.
 void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowHeight, int& cellSize, int& numThreads, std::string& memoryType);
+
+/*
+    Description:
+        - Frees allocated CUDA memory for the current and next grid states based on the memory type.
+    
+    Parameters:
+        - d_currentGrid: Points to the device memory for the current grid state.
+        - d_nextGrid: Points to the device memory for the next grid state.
+        - memoryType: Memory allocation type (NORMAL/PINNED/MANAGED)
+*/
 void freeCudaMemory(bool* d_currentGrid, bool* d_nextGrid, std::string memoryType);
 
-/*
-    MAIN FUNCTION
-*/
+
+//####################################################################//
+//####################################################################//
+//                              MAIN                                  //
+//####################################################################//
+//####################################################################//
+
 int main(int argc, char* argv[]) {
     // Default spec.
     int windowWidth = 800;
@@ -47,16 +73,18 @@ int main(int argc, char* argv[]) {
     int numThreads = 32;
     std::string memoryType = "NORMAL";
 
-    // Parse command line arguments & change default specs when necessary.
+    // Parse command line arguments and override defaults.
     parseCommandLineArgs(argc, argv, windowWidth, windowHeight, cellSize, numThreads, memoryType);
 
-    // Set grid dimensions.
+    // Grid dimensions
     gridWidth = windowWidth / cellSize;
     gridHeight = windowHeight / cellSize;
 
+    // Device pointers for current & next grid state.
     bool* d_currentGrid;
     bool* d_nextGrid;
 
+    // Allocate CUDA memory based on the memory type.
     if (memoryType == "PINNED") {
         cudaMallocHost(&d_currentGrid, gridWidth * gridHeight * sizeof(bool));
         cudaMallocHost(&d_nextGrid, gridWidth * gridHeight * sizeof(bool));
@@ -73,27 +101,31 @@ int main(int argc, char* argv[]) {
         std::cerr << "Invalid memory type: " << memoryType << "\n"; 
     }
 
-    // Seed the initial grid with random values
+    // Host grid for initializing with live/dead cells.
     bool* h_grid = new bool[gridWidth * gridHeight];
     randomizeGrid(h_grid, gridWidth, gridHeight);
     cudaMemcpy(d_currentGrid, h_grid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyHostToDevice);
+    // Free temp host grid.
     delete[] h_grid;
 
-    // Allocate memory on the host for visualization
+    // Host array to store the current grid state for rendering.
     bool* h_currentGrid = new bool[gridWidth * gridHeight];
 
-    // Define the CUDA thread and block dimensions
-    dim3 numThreadsDimensions(16, 16);
+    // Define CUDA thread block and grid sizes.
+    dim3 numThreadsDimensions(numThreads, numThreads);
     dim3 numBlocks((gridWidth + numThreadsDimensions.x - 1) / numThreadsDimensions.x, (gridHeight + numThreadsDimensions.y - 1) / numThreadsDimensions.y);
 
-    // Set up the SFML window
+    // Create SFML window.
     sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Lab 4: CUDA Game of Life");
-    window.setFramerateLimit(60);
+    
+    // Set framerate limit.
+    // window.setFramerateLimit(60);
 
-    // Variables to keep track of the number of generations & total processing time.
+    // Keep track of number of generations processed & cumulative processing time.
     int generationCount = 0;
     float totalProcessingTime = 0.0f;
 
+    // Game loop
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
@@ -103,37 +135,37 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Initialize Events to keep track of generation time.
+        // CUDA events for timing and generation processing.
         cudaEvent_t generationStart;
         cudaEvent_t generationEnd;
         cudaEventCreate(&generationStart);
         cudaEventCreate(&generationEnd);
 
-        // Time at start of generation.
+        // Start timing the processing.
         cudaEventRecord(generationStart);
 
-        // Run CUDA kernel to update the grid
+        // Call the CUDA kernel to update the grid.
         runProgram(d_currentGrid, d_nextGrid, gridWidth, gridHeight, numThreadsDimensions, numBlocks);
 
-        // Swap the grids
+        // Swap pointers for current and next grid state.
         std::swap(d_currentGrid, d_nextGrid);
 
-        // Copy the entire grid from device to host for visualization
+        // Copy the updated grid from device to host for rendering.
         cudaMemcpy(h_currentGrid, d_currentGrid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyDeviceToHost);
 
-        // Time at end of generation.
+        // Stop timing the processing.
         cudaEventRecord(generationEnd);
         cudaEventSynchronize(generationEnd);
 
-        // Calculate duration of generation & add to total processing time.
+        // Calculate the processing time for generation & add to cumulative processing time.
         float processingTime = 0.0f;        
         cudaEventElapsedTime(&processingTime, generationStart, generationEnd);
         totalProcessingTime += processingTime;
 
-        // Increase the generation count
+        // Increment generation count.
         generationCount++;
 
-        // Draw the current grid
+        // Clear window for rendering & render.
         window.clear();
         for (int y = 0; y < gridHeight; ++y) {
             for (int x = 0; x < gridWidth; ++x) {
@@ -147,7 +179,7 @@ int main(int argc, char* argv[]) {
         }
         window.display();
 
-        // Display timing information every 100 frames
+        // Every 100 generations, report the average processing time.
         if (generationCount >= 100) {
             std::cout << "100 generations took " << totalProcessingTime << " microseconds.\n";
             generationCount = 0;
@@ -155,19 +187,22 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Free the allocated host memory
+    // Free the host memory.
     delete[] h_currentGrid;
 
-    // Free GPU memory
+    // Free CUDA memory.
     freeCudaMemory(d_currentGrid, d_nextGrid, memoryType);
 
     return 0;
 }
 
 
-/*
-    FUNCTION IMPLEMENTATIONS
-*/
+//####################################################################//
+//####################################################################//
+//                      FUNCTION IMPLEMENTATIONS                      //
+//####################################################################//
+//####################################################################//
+
 void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowHeight, int& cellSize, int& numThreads, std::string& memoryType) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
