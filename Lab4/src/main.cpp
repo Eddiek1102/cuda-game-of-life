@@ -28,6 +28,12 @@ Description: Main file for Conway's Game of Life using CUDA for processing.
 
 
 /*
+    FUNCTION PROTOTYPES
+*/
+// Parses user's command line arguments to changes default game specs.
+void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowHeight, int& cellSize, int& numThreads, std::string& memoryType);
+
+/*
     MAIN FUNCTION
 */
 int main(int argc, char* argv[]) {
@@ -37,28 +43,11 @@ int main(int argc, char* argv[]) {
     int cellSize = 5;
     int gridWidth = windowWidth / cellSize;
     int gridHeight = windowHeight / cellSize;
-    int threadsPerBlock = 32;
+    int numThreads = 32;
     std::string memoryType = "NORMAL";
 
     // Parse command line arguments & change default specs when necessary.
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-x" && i + 1 < argc) {
-            windowWidth = std::stoi(argv[++i]);
-        }
-        else if (arg == "-y" && i + 1 < argc) {
-            windowHeight = std::stoi(argv[++i]);
-        }
-        else if (arg == "-c" && i + 1 < argc) {
-            cellSize = std::stoi(argv[++i]);
-        }
-        else if (arg == "-n" && i + 1 < argc) {
-            threadsPerBlock = std::stoi(argv[++i]);
-        }
-        else if (arg == "-t" && i + 1 < argc) {
-            memoryType = argv[++i];
-        }
-    }
+    parseCommandLineArgs(argc, argv, windowWidth, windowHeight, cellSize, numThreads, memoryType);
 
     // Set grid dimensions.
     gridWidth = windowWidth / cellSize;
@@ -93,8 +82,8 @@ int main(int argc, char* argv[]) {
     bool* h_currentGrid = new bool[gridWidth * gridHeight];
 
     // Define the CUDA thread and block dimensions
-    dim3 threadsPerBlockDim(16, 16);
-    dim3 numBlocks((gridWidth + threadsPerBlockDim.x - 1) / threadsPerBlockDim.x, (gridHeight + threadsPerBlockDim.y - 1) / threadsPerBlockDim.y);
+    dim3 numThreadsDimensions(16, 16);
+    dim3 numBlocks((gridWidth + numThreadsDimensions.x - 1) / numThreadsDimensions.x, (gridHeight + numThreadsDimensions.y - 1) / numThreadsDimensions.y);
 
     // Set up the SFML window
     sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Lab 4: CUDA Game of Life");
@@ -121,7 +110,13 @@ int main(int argc, char* argv[]) {
         cudaEventRecord(generationStart);
 
         // Run CUDA kernel to update the grid
-        runGameOfLife(d_currentGrid, d_nextGrid, gridWidth, gridHeight, threadsPerBlockDim, numBlocks);
+        runGameOfLife(d_currentGrid, d_nextGrid, gridWidth, gridHeight, numThreadsDimensions, numBlocks);
+
+        // Swap the grids
+        std::swap(d_currentGrid, d_nextGrid);
+
+        // Copy the entire grid from device to host for visualization
+        cudaMemcpy(h_currentGrid, d_currentGrid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyDeviceToHost);
 
         // Time at end of generation.
         cudaEventRecord(generationEnd);
@@ -134,12 +129,6 @@ int main(int argc, char* argv[]) {
 
         // Increase the generation count
         generationCount++;
-
-        // Swap the grids
-        std::swap(d_currentGrid, d_nextGrid);
-
-        // Copy the entire grid from device to host for visualization
-        cudaMemcpy(h_currentGrid, d_currentGrid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyDeviceToHost);
 
         // Draw the current grid
         window.clear();
@@ -177,4 +166,32 @@ int main(int argc, char* argv[]) {
     }
 
     return 0;
+}
+
+
+/*
+    FUNCTION IMPLEMENTATIONS
+*/
+void parseCommandLineArgs(int argc, char* argv[], int& windowWidth, int& windowHeight, int& cellSize, int& numThreads, std::string& memoryType) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-n" && i + 1 < argc) {
+            numThreads = std::stoi(argv[++i]);
+        }
+        else if (arg == "-c" && i + 1 < argc) {
+            cellSize = std::stoi(argv[++i]);
+        }
+        else if (arg == "-x" && i + 1 < argc) {
+            windowWidth = std::stoi(argv[++i]);
+        }
+        else if (arg == "-y" && i + 1 < argc) {
+            windowHeight = std::stoi(argv[++i]);
+        }
+        else if (arg == "-t" && i + 1 < argc) {
+            memoryType = argv[++i];
+        }
+        else {
+            std::cerr << "Invalid/unknown command line arguments: " << arg << "\n";
+        }
+    }
 }
