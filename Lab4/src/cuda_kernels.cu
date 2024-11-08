@@ -1,3 +1,10 @@
+/*
+Author: Edward Kwak
+Class: ECE 4122
+Last Modified Date: 11/8/2024
+
+*/
+
 #include "cuda_kernels.cuh"
 #include <cstdlib>
 #include <ctime>

@@ -1,13 +1,35 @@
+/*
+Author: Edward Kwak
+Class: ECE 4122
+Last Modified Date: 11/8/2024
+
+Description: Main file for Conway's Game of Life using CUDA for processing.
+
+             Sample command line input: 
+                ./Lab4 -n = 8 -c 5 -x 800 -y 600 -t NORMAL
+                    -n = number of threads per block
+                    -c = cell size
+                    -x = window width
+                    -y = window height
+                    -t = memory type (NORMAL, PINNED, MANAGED)
+
+*/
+
+/*
+    PREPROCESSOR DIRECTIVES
+*/
 #include <iostream>
 #include <vector>
 #include <string>
 #include <chrono>
-
 #include <cuda_runtime.h>
 #include <SFML/Graphics.hpp>
 #include "cuda_kernels.cuh"
 
 
+/*
+    MAIN FUNCTION
+*/
 int main(int argc, char* argv[]) {
     // Default spec.
     int windowWidth = 800;
@@ -18,7 +40,7 @@ int main(int argc, char* argv[]) {
     int threadsPerBlock = 32;
     std::string memoryType = "NORMAL";
 
-    // Parse command line arguments
+    // Parse command line arguments & change default specs when necessary.
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-x" && i + 1 < argc) {
@@ -38,11 +60,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Set grid dimensions.
     gridWidth = windowWidth / cellSize;
     gridHeight = windowHeight / cellSize;
 
-    // Allocate memory for the grids based on memory type
-    bool* d_currentGrid, * d_nextGrid;
+    bool* d_currentGrid;
+    bool* d_nextGrid;
+
     if (memoryType == "PINNED") {
         cudaMallocHost(&d_currentGrid, gridWidth * gridHeight * sizeof(bool));
         cudaMallocHost(&d_nextGrid, gridWidth * gridHeight * sizeof(bool));
@@ -51,9 +75,12 @@ int main(int argc, char* argv[]) {
         cudaMallocManaged(&d_currentGrid, gridWidth * gridHeight * sizeof(bool));
         cudaMallocManaged(&d_nextGrid, gridWidth * gridHeight * sizeof(bool));
     }
-    else {
+    else if (memoryType == "NORMAL") {
         cudaMalloc(&d_currentGrid, gridWidth * gridHeight * sizeof(bool));
         cudaMalloc(&d_nextGrid, gridWidth * gridHeight * sizeof(bool));
+    }
+    else {
+        std::cerr << "Invalid memory type.\n";
     }
 
     // Seed the initial grid with random values
@@ -67,16 +94,14 @@ int main(int argc, char* argv[]) {
 
     // Define the CUDA thread and block dimensions
     dim3 threadsPerBlockDim(16, 16);
-    dim3 numBlocks((gridWidth + threadsPerBlockDim.x - 1) / threadsPerBlockDim.x,
-        (gridHeight + threadsPerBlockDim.y - 1) / threadsPerBlockDim.y);
+    dim3 numBlocks((gridWidth + threadsPerBlockDim.x - 1) / threadsPerBlockDim.x, (gridHeight + threadsPerBlockDim.y - 1) / threadsPerBlockDim.y);
 
     // Set up the SFML window
-    sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "CUDA-based Game of Life");
-    window.setFramerateLimit(60);
+    sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Lab 4: CUDA Game of Life");
+    //window.setFramerateLimit(60);
 
-    // Main loop
-    unsigned long frameCounter = 0;
-    double processTime = 0.0;
+    int generationCount = 0;
+    float totalProcessingTime = 0.0f;
 
     while (window.isOpen()) {
         sf::Event event;
@@ -86,20 +111,32 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Start timing
-        auto start_time = std::chrono::high_resolution_clock::now();
+        // Initialize Events to keep track of generation time.
+        cudaEvent_t generationStart;
+        cudaEvent_t generationEnd;
+        cudaEventCreate(&generationStart);
+        cudaEventCreate(&generationEnd);
+
+        // Time at start of generation.
+        cudaEventRecord(generationStart);
 
         // Run CUDA kernel to update the grid
         runGameOfLife(d_currentGrid, d_nextGrid, gridWidth, gridHeight, threadsPerBlockDim, numBlocks);
 
+        // Time at end of generation.
+        cudaEventRecord(generationEnd);
+        cudaEventSynchronize(generationEnd);
+
+        // Calculate duration of generation & add to total processing time.
+        float processingTime = 0.0f;        
+        cudaEventElapsedTime(&processingTime, generationStart, generationEnd);
+        totalProcessingTime += processingTime;
+
+        // Increase the generation count
+        generationCount++;
+
         // Swap the grids
         std::swap(d_currentGrid, d_nextGrid);
-
-        // Stop timing
-        auto end_time = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-        processTime += duration;
-        frameCounter++;
 
         // Copy the entire grid from device to host for visualization
         cudaMemcpy(h_currentGrid, d_currentGrid, gridWidth * gridHeight * sizeof(bool), cudaMemcpyDeviceToHost);
@@ -119,10 +156,10 @@ int main(int argc, char* argv[]) {
         window.display();
 
         // Display timing information every 100 frames
-        if (frameCounter == 100) {
-            std::cout << "100 generations took " << processTime << " microseconds." << std::endl;
-            frameCounter = 0;
-            processTime = 0.0;
+        if (generationCount >= 100) {
+            std::cout << "100 generations took " << totalProcessingTime << " microseconds.\n";
+            generationCount = 0;
+            totalProcessingTime = 0.0f;
         }
     }
 
